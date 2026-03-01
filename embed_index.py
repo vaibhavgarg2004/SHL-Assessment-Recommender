@@ -10,7 +10,7 @@ CHROMA_PATH = "./chroma_db"
 DATA_PATH = "data/shl_catalog_enriched.json"
 
 ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="BAAI/bge-base-en-v1.5"
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
 
 # Test Type Mapping

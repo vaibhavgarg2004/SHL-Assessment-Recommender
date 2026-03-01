@@ -9,17 +9,19 @@ load_dotenv()
 
 COLLECTION_NAME = "shl_assessments"
 
+# Chroma + Embedding Setup
+
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 
 ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="BAAI/bge-base-en-v1.5"
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
 
-groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
+groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
+# Extract Skill Query
 
-def extract_skill_query(query):
-    """Extract relevant skill terms from query."""
+def extract_skill_query(query: str) -> str:
     query = query.lower()
 
     skill_terms = [
@@ -40,11 +42,16 @@ def extract_skill_query(query):
     ]
 
     extracted = [term for term in skill_terms if term in query]
-    return " ".join(extracted) if extracted else " ".join(query.split()[:50])
 
+    if extracted:
+        return " ".join(extracted)
 
-def detect_required_types(query):
-    """Detect assessment types needed based on query."""
+    # fallback for long JDs
+    return " ".join(query.split()[:50])
+
+# Detect Required Test Types
+
+def detect_required_types(query: str):
     query = query.lower()
 
     type_map = {
@@ -62,10 +69,12 @@ def detect_required_types(query):
     }
 
     required = set()
+
     for ttype, keywords in type_map.items():
         if any(word in query for word in keywords):
             required.add(ttype)
 
+    # Role-based adjustments
     if any(word in query for word in ["manager", "director", "executive"]):
         required.update(["A", "P", "C"])
 
@@ -74,9 +83,10 @@ def detect_required_types(query):
 
     return list(required) if required else ["K"]
 
+# Balanced Retrieval
 
-def balanced_retrieval(query, target_pool=20):
-    """Retrieve and balance assessments by type."""
+def balanced_retrieval(query: str, target_pool: int = 20):
+
     focused_query = extract_skill_query(query)
     required_types = detect_required_types(query)
 
@@ -85,16 +95,23 @@ def balanced_retrieval(query, target_pool=20):
         embedding_function=ef
     )
 
-    results = collection.query(query_texts=[focused_query], n_results=40)
+    results = collection.query(
+        query_texts=[focused_query],
+        n_results=40
+    )
+
     metadatas = results["metadatas"][0]
 
     balanced = []
+
+    # Ensure coverage of required types
     for ttype in required_types:
         for meta in metadatas:
             if meta not in balanced and ttype in meta.get("test_type", ""):
                 balanced.append(meta)
                 break
 
+    # Fill remaining semantically
     for meta in metadatas:
         if len(balanced) >= target_pool:
             break
@@ -103,57 +120,70 @@ def balanced_retrieval(query, target_pool=20):
 
     return balanced[:target_pool]
 
+# LLM Reranking
 
-def rerank_with_llm(query, candidates, final_k=10):
-    """Rerank candidates using LLM."""
-    formatted = "\n\n".join([
-        f"URL: {c.get('url', 'N/A')}\n"
-        f"Name: {c.get('name', 'N/A')}\n"
-        f"Test Type: {c.get('test_type', 'N/A')}\n"
-        f"Duration: {c.get('duration', 'N/A')}\n"
-        f"Description: {c.get('description', 'N/A')[:250] if c.get('description') else 'N/A'}"
+def rerank_with_llm(query: str, candidates: list, final_k: int = 10):
+
+    formatted_candidates = "\n\n".join([
+        f"URL: {c.get('url')}\n"
+        f"Name: {c.get('name')}\n"
+        f"Test Type: {c.get('test_type')}\n"
+        f"Duration: {c.get('duration')}\n"
+        f"Description: {(c.get('description') or '')[:250]}"
         for c in candidates
     ])
 
-    prompt = f"""You are an expert HR assessment recommendation system.
-Given a job description and {len(candidates)} candidate assessments, select the TOP {final_k} most relevant.
+    prompt = f"""
+You are an expert HR assessment recommendation system.
+
+Select the TOP {final_k} most relevant assessments from the list.
 
 Rules:
 - Only choose from provided URLs
-- Ensure relevance to skills and job level
-- Maintain balance if both technical and behavioral skills appear
-- Return ONLY a JSON array of URLs in ranked order
-- No explanation text
+- Ensure skill and job level relevance
+- Maintain balance between technical and behavioral tests if applicable
+- Return ONLY a JSON array of URLs (no explanation)
 
 JOB DESCRIPTION:
 {query}
 
 CANDIDATE ASSESSMENTS:
-{formatted}"""
-
-    completion = groq_client.chat.completions.create(
-        model=os.environ["GROQ_MODEL"],
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0
-    )
+{formatted_candidates}
+"""
 
     try:
-        selected_urls = json.loads(completion.choices[0].message.content.strip())
-    except json.JSONDecodeError:
+        completion = groq_client.chat.completions.create(
+            model=os.environ.get("GROQ_MODEL"),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+
+        response_text = completion.choices[0].message.content.strip()
+        selected = json.loads(response_text)
+
+    except Exception:
+        # Safe fallback
         return candidates[:final_k]
 
-    url_map = {c.get("url", ""): c for c in candidates if c.get("url")}
+    #  Normalize LLM output safely
     cleaned_urls = []
-    for item in selected_urls:
+
+    for item in selected:
         if isinstance(item, dict):
             url = item.get("url")
-        else:
-            url = item
+            if isinstance(url, str):
+                cleaned_urls.append(url.strip())
+        elif isinstance(item, str):
+            cleaned_urls.append(item.strip())
 
-    if isinstance(url, str):
-        cleaned_urls.append(url.strip())
-    reranked = [url_map[url] for url in selected_urls if url in url_map]
+    url_map = {c.get("url"): c for c in candidates if c.get("url")}
 
+    reranked = []
+    for url in cleaned_urls:
+        if url in url_map:
+            reranked.append(url_map[url])
+
+    # Fill if LLM returns fewer than needed
     for c in candidates:
         if c not in reranked and len(reranked) < final_k:
             reranked.append(c)
@@ -161,8 +191,11 @@ CANDIDATE ASSESSMENTS:
     return reranked[:final_k]
 
 
-def recommend(query, n_results=10):
-    """Generate final assessment recommendations."""
+# Public Recommend Function
+
+def recommend(query: str, n_results: int = 10):
+
     candidate_pool = balanced_retrieval(query, target_pool=20)
     final_results = rerank_with_llm(query, candidate_pool, final_k=n_results)
+
     return {"metadatas": [final_results]}
