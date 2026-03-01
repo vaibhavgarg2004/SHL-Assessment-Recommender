@@ -9,4 +9,6 @@ pysqlite3==0.6.0
 python-dotenv==1.2.2
 requests==2.32.5
 streamlit==1.45.1
+torch==2.2.2+cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
 sentence-transformers==2.7.0
