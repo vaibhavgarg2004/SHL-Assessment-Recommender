@@ -4,7 +4,7 @@ import pandas as pd
 
 # CONFIG
 
-API_URL = "http://127.0.0.1:8000/recommend"
+API_URL = "https://shl-assessment-recommender-uovg.onrender.com/recommend"
 
 st.set_page_config(page_title="SHL Assessment Recommender", layout="wide")
 
