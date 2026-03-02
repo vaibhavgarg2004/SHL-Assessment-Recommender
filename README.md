@@ -189,7 +189,7 @@ POST /recommend
 
 ## 🖼️ Application Snapshot
 
-![Application UI](Frontend_Demo.png)
+![Application UI](Frontend_demo.png)
 
 ---
 
