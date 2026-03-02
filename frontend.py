@@ -9,7 +9,7 @@ API_URL = "https://shl-assessment-recommender-uovg.onrender.com/recommend"
 st.set_page_config(page_title="SHL Assessment Recommender", layout="wide")
 
 st.title("SHL Assessment Recommendation System")
-st.write("Enter a job description to get 5-10 most relevant individual test solutions. (The first reuest can take upto 5 minutes as the backend server is in sleep mode, subsequent requests will be faster.)")
+st.write("Enter a job description to get 5-10 most relevant individual test solutions. (The first request can take upto 5 minutes as the backend server is in sleep mode, subsequent requests will be faster.)")
 
 # INPUT
 
